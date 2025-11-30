@@ -11,6 +11,7 @@ from src.early_screener import EarlyScreener
 from src.comment_filter import CommentFilter
 from src.comment_analyzer import CommentAnalyzer
 from src.quality_evaluator import QualityEvaluator
+from src.whisper_transcriber import WhisperTranscriber
 from src.utils import get_env, save_json, ProgressLogger
 
 class YouTubeCommentOrchestrator:
@@ -23,6 +24,7 @@ class YouTubeCommentOrchestrator:
         self.query_generator = SearchQueryGenerator(self.logger)
         self.searcher = YouTubeSearcher(self.logger)
         self.transcript_fetcher = TranscriptFetcher(self.logger)
+        self.whisper_transcriber = WhisperTranscriber(self.logger)
         self.comment_fetcher = CommentFetcher(self.logger)
         self.screener = EarlyScreener(self.logger)
         self.comment_filter = CommentFilter(self.logger)
@@ -68,9 +70,9 @@ class YouTubeCommentOrchestrator:
             self.logger.error("動画が見つかりませんでした")
             return []
 
-        # Step 3: 早期スクリーニング
-        self.logger.log("\n🎯 Step 3: 早期スクリーニング")
-        screened_videos = self._screen_videos(videos)
+        # Step 3: コメント取得 + 早期スクリーニング
+        self.logger.log("\n💬 Step 3: コメント取得 + 早期スクリーニング")
+        screened_videos = self._screen_videos_by_comments(videos)
         if not screened_videos:
             self.logger.warning("ネタになる動画が見つかりませんでした")
             return []
@@ -95,67 +97,57 @@ class YouTubeCommentOrchestrator:
 
         return all_results
 
-    def _screen_videos(self, videos: List[Dict]) -> List[Dict]:
-        """動画を早期スクリーニング"""
+    def _screen_videos_by_comments(self, videos: List[Dict]) -> List[Dict]:
+        """
+        コメントの面白さでスクリーニング（新フロー）
+        動画内容は見ない、コメントのみで判定
+        """
         screened_videos = []
 
         for video in videos:
-            # 文字起こしサンプル取得（最初の3分）
-            transcript_sample = self.transcript_fetcher.get_transcript_text(
+            # コメント取得（全件）
+            comments_data = self.comment_fetcher.fetch_comments(
                 video['video_id'],
-                max_duration=180
+                max_results=self.max_comments
             )
 
-            if not transcript_sample:
-                self.logger.warning(f"字幕なし、スキップ: {video['title']}")
-                continue
-
-            # 上位コメント取得
-            top_comments = self.comment_fetcher.get_top_comments(
-                video['video_id'],
-                count=self.screening_comments
-            )
-
-            if not top_comments:
+            if not comments_data:
                 self.logger.warning(f"コメントなし、スキップ: {video['title']}")
                 continue
 
-            # スクリーニング実行
-            screening_result = self.screener.screen_video(
+            comments = [c['text'] for c in comments_data]
+
+            # コメントのみでスクリーニング
+            screening_result = self.screener.screen_comments(
                 video,
-                transcript_sample,
-                top_comments
+                comments
             )
 
             if screening_result['passed']:
                 screened_videos.append({
                     "video_info": video,
+                    "comments": comments,  # コメントを保持
                     "screening_result": screening_result
                 })
 
         return screened_videos
 
     def _analyze_video(self, video_data: Dict) -> Optional[Dict]:
-        """1つの動画を詳細分析（自己改善ループ付き）"""
+        """
+        1つの動画を詳細分析（自己改善ループ付き）
+        新フロー: Whisperで文字起こし → シーンマッチング
+        """
         video_info = video_data['video_info']
         self.logger.log(f"\n📹 分析中: {video_info['title']}")
 
-        # 全文字起こし取得
-        transcript = self.transcript_fetcher.get_transcript_with_timestamps(
-            video_info['video_id']
-        )
+        # Step 1: 文字起こし取得（YouTube字幕 or Whisper）
+        transcript = self._get_transcript(video_info['video_id'])
         if not transcript:
             self.logger.error("文字起こしの取得に失敗")
             return None
 
-        # 全コメント取得
-        comments_data = self.comment_fetcher.fetch_comments(
-            video_info['video_id'],
-            max_results=self.max_comments
-        )
-        comments = [c['text'] for c in comments_data]
-
-        # コメントフィルタリング
+        # Step 2: コメントフィルタリング（既にスクリーニングで取得済み）
+        comments = video_data['comments']
         filtered_comments = self.comment_filter.filter_comments(
             comments,
             target_count=self.filtered_comments
@@ -213,6 +205,35 @@ class YouTubeCommentOrchestrator:
                     }
 
         return None
+
+    def _get_transcript(self, video_id: str) -> Optional[str]:
+        """
+        文字起こしを取得（YouTube字幕優先、なければWhisper）
+
+        Args:
+            video_id: YouTube動画ID
+
+        Returns:
+            文字起こしテキスト（タイムスタンプ付き）
+        """
+        # まずYouTube字幕を試す
+        self.logger.info("YouTube字幕を確認中...")
+        transcript = self.transcript_fetcher.get_transcript_with_timestamps(video_id)
+
+        if transcript:
+            self.logger.success("YouTube字幕を取得しました")
+            return transcript
+
+        # YouTube字幕がなければWhisperで文字起こし
+        self.logger.info("YouTube字幕なし、Whisper文字起こしを実行...")
+        transcript = self.whisper_transcriber.transcribe_video(video_id)
+
+        if transcript:
+            self.logger.success("Whisper文字起こし完了")
+            return transcript
+        else:
+            self.logger.error("文字起こしを取得できませんでした")
+            return None
 
 
 if __name__ == "__main__":
