@@ -17,3 +17,6 @@ tqdm==4.66.1
 
 # Additional
 requests==2.31.0
+
+# Audio/Video processing for Whisper transcription
+yt-dlp>=2023.12.30
