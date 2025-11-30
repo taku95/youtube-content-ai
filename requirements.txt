@@ -2,14 +2,14 @@
 google-api-python-client==2.108.0
 youtube-transcript-api==0.6.1
 
-# OpenAI
-openai==1.7.1
+# OpenAI (updated for Python 3.14 compatibility)
+openai>=1.54.0
 
 # UI
 streamlit==1.29.0
 
-# Data processing
-pandas==2.1.4
+# Data processing (updated for Python 3.14 compatibility)
+pandas>=2.2.0
 
 # Utilities
 python-dotenv==1.0.0

@@ -28,7 +28,7 @@ class SearchQueryGenerator:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "あなたはYouTube検索のエキスパートです。"},
                     {"role": "user", "content": prompt}

@@ -64,7 +64,7 @@ class CommentAnalyzer:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "あなたはお笑い芸人のツッコミ職人です。"},
                     {"role": "user", "content": prompt}
