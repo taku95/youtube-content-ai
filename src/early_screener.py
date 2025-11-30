@@ -1,10 +1,10 @@
 """
-早期スクリーニングモジュール
-動画がネタになるかを事前判定してコスト削減
+早期スクリーニングモジュール（コメントのみ版）
+コメントの面白さだけでスクリーニングしてコスト削減
 """
 import openai
 from typing import Dict, List
-from config.prompt_template import EARLY_SCREENING_PROMPT
+from config.prompt_template import COMMENT_SCREENING_PROMPT
 from src.utils import get_env, extract_json_from_text, ProgressLogger
 
 class EarlyScreener:
@@ -12,48 +12,46 @@ class EarlyScreener:
         self.client = openai.OpenAI(api_key=get_env("OPENAI_API_KEY"))
         self.logger = logger or ProgressLogger()
 
-    def screen_video(
+    def screen_comments(
         self,
         video_info: Dict,
-        transcript_sample: str,
-        top_comments: List[str],
-        threshold: float = 5.0
+        comments: List[str],
+        threshold: float = 6.0
     ) -> Dict:
         """
-        動画がネタになるかスクリーニング
+        コメントの面白さだけでスクリーニング（動画内容は見ない）
 
         Args:
-            video_info: 動画情報 {"title", "description", ...}
-            transcript_sample: 文字起こしサンプル（最初の数分）
-            top_comments: 上位コメントリスト
-            threshold: 合格スコア閾値
+            video_info: 動画情報 {"title", "channel_title", ...}
+            comments: 全コメントリスト
+            threshold: 合格スコア閾値（デフォルト6.0）
 
         Returns:
             {
                 "passed": True/False,
                 "score": スコア,
                 "reason": 理由,
-                "expected_content": 期待できるネタの種類
+                "example_comments": サンプルコメント,
+                "expected_content_type": 期待できるネタの種類
             }
         """
-        self.logger.info(f"スクリーニング中: {video_info['title']}")
+        self.logger.info(f"コメントスクリーニング中: {video_info['title']}")
 
         # コメントを整形
-        comments_text = "\n".join([f"{i+1}. {c}" for i, c in enumerate(top_comments)])
+        comments_text = "\n".join([f"{i+1}. {c}" for i, c in enumerate(comments)])
 
-        prompt = EARLY_SCREENING_PROMPT.format(
+        prompt = COMMENT_SCREENING_PROMPT.format(
             title=video_info['title'],
-            description=video_info.get('description', '')[:300],  # 説明文は最初の300文字まで
-            transcript_sample=transcript_sample,
-            top_comments=comments_text,
-            comment_count=len(top_comments)
+            channel_title=video_info.get('channel_title', '不明'),
+            comments=comments_text,
+            comment_count=len(comments)
         )
 
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4o",  # 最高峰モデル使用
                 messages=[
-                    {"role": "system", "content": "あなたはYouTuberのネタ探しアシスタントです。"},
+                    {"role": "system", "content": "あなたはYouTuberのネタ探しエージェントです。"},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,  # 判定は安定性重視
@@ -64,15 +62,15 @@ class EarlyScreener:
             result = extract_json_from_text(result_text)
 
             if result:
-                score = result.get("ネタ化可能性スコア", 0)
-                passed = score >= threshold and result.get("推奨") == "continue"
+                score = result.get("score", 0)
+                passed = result.get("passed", False) and score >= threshold
 
                 screening_result = {
                     "passed": passed,
                     "score": score,
-                    "reason": result.get("理由", ""),
-                    "expected_content": result.get("期待できるネタの種類", ""),
-                    "recommendation": result.get("推奨", "skip")
+                    "reason": result.get("reason", ""),
+                    "example_comments": result.get("example_comments", []),
+                    "expected_content_type": result.get("expected_content_type", "")
                 }
 
                 if passed:
@@ -92,16 +90,15 @@ class EarlyScreener:
     def screen_multiple_videos(
         self,
         videos_data: List[Dict],
-        threshold: float = 5.0
+        threshold: float = 6.0
     ) -> List[Dict]:
         """
-        複数動画をスクリーニングして合格動画のみ返す
+        複数動画をコメントでスクリーニングして合格動画のみ返す
 
         Args:
             videos_data: [{
                 "video_info": 動画情報,
-                "transcript_sample": 文字起こしサンプル,
-                "top_comments": コメントリスト
+                "comments": コメントリスト
             }]
             threshold: 合格スコア閾値
 
@@ -111,10 +108,9 @@ class EarlyScreener:
         passed_videos = []
 
         for data in videos_data:
-            result = self.screen_video(
+            result = self.screen_comments(
                 data['video_info'],
-                data['transcript_sample'],
-                data['top_comments'],
+                data['comments'],
                 threshold
             )
 
@@ -133,16 +129,18 @@ if __name__ == "__main__":
     # サンプルデータ
     video_info = {
         "title": "女性ドライバーの衝撃事故集",
-        "description": "様々な事故の瞬間を集めました"
+        "channel_title": "交通安全チャンネル"
     }
 
-    transcript_sample = "[0:00] 今日は事故の瞬間を見ていきます [0:05] まずはこちらの映像をご覧ください..."
-
-    top_comments = [
+    comments = [
         "だから女は運転するなって言ってんだよ",
         "これは男でも無理だろ",
-        "運転下手すぎて草"
+        "運転下手すぎて草",
+        "女性差別やめろ",
+        "これだから最近の若者は...",
+        "完全に信号無視じゃん",
+        "免許返納しろよマジで"
     ]
 
-    result = screener.screen_video(video_info, transcript_sample, top_comments)
+    result = screener.screen_comments(video_info, comments)
     print(f"\nスクリーニング結果: {result}")
