@@ -75,6 +75,7 @@ class WhisperTranscriber:
             # yt-dlpコマンド実行
             cmd = [
                 "yt-dlp",
+                "-f", "bestaudio",  # 最高品質の音声
                 "-x",  # 音声のみ抽出
                 "--audio-format", "mp3",
                 "--audio-quality", "5",  # 中品質（ファイルサイズ削減）
